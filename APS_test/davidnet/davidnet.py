@@ -20,13 +20,30 @@ class Precision_cast(nn.Module):
     def __init__(self, use_APS=False):
         super(Precision_cast, self).__init__()
         self.use_APS = use_APS
+        self.shift_factor = None
+        self.fix_shift_factor = False
+        self.same_cnt = 0
     def forward(self,x):
         if not self.use_APS:
             return float_quantize(x, 4,3)
         else:
-            shift_factor = 7 - torch.log2(torch.abs(x).max()).ceil().detach().cpu().numpy()
-            return float_quantize(x*(2**shift_factor), 4,3)
+            if self.shift_factor and not self.fix_shift_factor:
+                if self.shift_factor == 7 - torch.log2(torch.abs(x).max()).ceil().detach().cpu().numpy():
+                    # if shift factor is equal with last iteration,
+                    # we believe the distribution is constant, so we 
+                    # just keep former shift factor, instead of calculating
+                    # new one
+                    self.same_cnt += 1
+                    # 15 iter/epoch for 4K batch size
+                    if self.same_cnt == 30:
+                        self.fix_shift_factor = True
+                else:
+                    self.same_cnt = 0
+                    
 
+            if not self.fix_shift_factor:
+                self.shift_factor = 7 - torch.log2(torch.abs(x).max()).ceil().detach().cpu().numpy()
+            return float_quantize(x*(2**self.shift_factor), 4,3)
 #Network definition
 def conv_bn(c_in, c_out, bn_weight_init=1.0, **kw):
     return {
